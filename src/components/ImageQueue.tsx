@@ -29,7 +29,7 @@ export default function ImageQueue({ format, setFormat, sessionId, onClear, newF
       .then(res => res.json())
       .then(data => {
         if (data.files && Array.isArray(data.files)) {
-          setQueue(data.files.map((file: any) => ({
+          setQueue(data.files.map((file: { name: string; file: string; format: string; thumbnail: string }) => ({
             name: file.name,
             url: `/api/download?session=${sessionId}&file=${encodeURIComponent(file.file)}`,
             format: file.format,
@@ -81,7 +81,7 @@ export default function ImageQueue({ format, setFormat, sessionId, onClear, newF
       // Remove waiting/converting items, add new converted
       setQueue(prev => [
         ...prev.filter(img => img.status === 'converted'),
-        ...data.files.map((file: any) => ({
+        ...data.files.map((file: { name: string; file: string; format: string; thumbnail: string }) => ({
           name: file.name,
           url: `/api/download?session=${sessionId}&file=${encodeURIComponent(file.file)}`,
           format: file.format,
@@ -89,7 +89,7 @@ export default function ImageQueue({ format, setFormat, sessionId, onClear, newF
           thumbnail: file.thumbnail ? `/api/thumbnail?session=${sessionId}&file=${encodeURIComponent(file.thumbnail)}` : ''
         }))
       ]);
-    } catch (error) {
+    } catch {
       setQueue(prev => prev.map(img => img.status === 'converting' ? { ...img, status: 'error' } : img));
     } finally {
       setIsConverting(false);

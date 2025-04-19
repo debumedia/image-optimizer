@@ -1,19 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import JSZip from 'jszip';
-import Image from 'next/image';
 import Cookies from 'js-cookie';
 import { v4 as uuidv4 } from 'uuid';
 import ImageQueue from './ImageQueue';
-
-interface ConvertedImage {
-  name: string;
-  url: string;
-  format: string;
-  status: 'waiting' | 'converting' | 'converted' | 'error';
-  thumbnail: string;
-}
 
 export default function ImageUploader() {
   const [files, setFiles] = useState<File[]>([]);

@@ -128,7 +128,7 @@ export async function GET(request: Request) {
   const files = db.prepare('SELECT file_name, file_path, format, thumbnail_path, created_at FROM files WHERE session_id = ?').all(sessionId);
   const sessionDir = path.join(TMP_ROOT, sessionId, 'output');
   const filteredFiles = [];
-  for (const file of files as any[]) {
+  for (const file of files as { file_name: string; file_path: string; format: string; thumbnail_path: string }[]) {
     const filePath = path.join(sessionDir, file.file_path);
     const thumbPath = path.join(sessionDir, file.thumbnail_path);
     try {
@@ -157,7 +157,7 @@ export async function DELETE(request: Request) {
   const files = db.prepare('SELECT file_path, thumbnail_path FROM files WHERE session_id = ?').all(sessionId);
   const sessionDir = path.join(TMP_ROOT, sessionId, 'output');
   // Delete files from disk
-  for (const file of files as any[]) {
+  for (const file of files as { file_name: string; file_path: string; format: string; thumbnail_path: string }[]) {
     const filePath = path.join(sessionDir, file.file_path);
     const thumbPath = path.join(sessionDir, file.thumbnail_path);
     try { await fs.unlink(filePath); } catch {}
