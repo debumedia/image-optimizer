@@ -25,6 +25,7 @@ db.exec(`
     file_path TEXT NOT NULL,
     format TEXT,
     thumbnail_path TEXT,
+    original_file_name TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(session_id, file_path),
     FOREIGN KEY(session_id) REFERENCES sessions(session_id)
@@ -107,9 +108,9 @@ export async function POST(request: Request) {
 
     // Insert or replace session and file records
     db.prepare('INSERT OR IGNORE INTO sessions (session_id) VALUES (?)').run(sessionId);
-    convertedFiles.forEach(({ name, format, file, thumbnail }) => {
-      db.prepare('INSERT OR REPLACE INTO files (session_id, file_name, file_path, format, thumbnail_path) VALUES (?, ?, ?, ?, ?)')
-        .run(sessionId, name, file, format, thumbnail);
+    convertedFiles.forEach(({ name, format, file, thumbnail }, idx) => {
+      db.prepare('INSERT OR REPLACE INTO files (session_id, file_name, file_path, format, thumbnail_path, original_file_name) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(sessionId, name, file, format, thumbnail, savedFiles[idx].origFileName);
     });
 
     // Return session ID and file info for download
@@ -154,14 +155,39 @@ export async function GET(request: Request) {
 export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url);
   const sessionId = searchParams.get('sessionId');
+  const file = searchParams.get('file');
   if (!sessionId) {
     return NextResponse.json({ error: 'Missing sessionId' }, { status: 400 });
   }
+  if (file) {
+    // Delete a single file
+    const sessionDir = path.join(TMP_ROOT, sessionId, 'output');
+    const fileRecord = db.prepare('SELECT file_path, thumbnail_path, original_file_name FROM files WHERE session_id = ? AND file_path = ?').get(sessionId, file) as { file_path: string; thumbnail_path: string; original_file_name: string } | undefined;
+    if (fileRecord) {
+      const filePath = path.join(sessionDir, fileRecord.file_path);
+      const thumbPath = path.join(sessionDir, fileRecord.thumbnail_path);
+      const originalDir = path.join(TMP_ROOT, sessionId, 'original');
+      const origPath = path.join(originalDir, fileRecord.original_file_name);
+      try { await fs.unlink(filePath); } catch {}
+      try { await fs.unlink(thumbPath); } catch {}
+      try { await fs.unlink(origPath); } catch {}
+      db.prepare('DELETE FROM files WHERE session_id = ? AND file_path = ?').run(sessionId, file);
+    }
+    // If no more files, clean up session and directories
+    const remaining = db.prepare('SELECT COUNT(*) as count FROM files WHERE session_id = ?').get(sessionId).count;
+    if (remaining === 0) {
+      const originalDir = path.join(TMP_ROOT, sessionId, 'original');
+      try { await fs.rm(sessionDir, { recursive: true, force: true }); } catch {}
+      try { await fs.rm(originalDir, { recursive: true, force: true }); } catch {}
+      db.prepare('DELETE FROM sessions WHERE session_id = ?').run(sessionId);
+    }
+    return NextResponse.json({ success: true });
+  }
   // Get all file paths for this session
-  const files = db.prepare('SELECT file_path, thumbnail_path FROM files WHERE session_id = ?').all(sessionId);
+  const files = db.prepare('SELECT file_path, thumbnail_path FROM files WHERE session_id = ?').all(sessionId) as { file_path: string; thumbnail_path: string }[];
   const sessionDir = path.join(TMP_ROOT, sessionId, 'output');
   // Delete files from disk
-  for (const file of files as { file_name: string; file_path: string; format: string; thumbnail_path: string }[]) {
+  for (const file of files) {
     const filePath = path.join(sessionDir, file.file_path);
     const thumbPath = path.join(sessionDir, file.thumbnail_path);
     try { await fs.unlink(filePath); } catch {}
