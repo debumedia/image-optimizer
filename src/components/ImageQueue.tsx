@@ -10,6 +10,7 @@ export interface QueueImage {
   fileObj?: File; // Only for waiting items
   originalSize?: number;
   convertedSize?: number;
+  reconvertFrom?: string; // If this is a reconvert, the original file name
 }
 
 interface ImageQueueProps {
@@ -83,7 +84,14 @@ export default function ImageQueue({ format, setFormat, sessionId, onClear, newF
     if (waiting.length === 0) return;
     setIsConverting(true);
     const formData = new FormData();
-    waiting.forEach(img => img.fileObj && formData.append('images', img.fileObj));
+    waiting.forEach(img => {
+      if (img.fileObj) {
+        formData.append('images', img.fileObj);
+      } else if (img.reconvertFrom) {
+        formData.append('reconvertFrom[]', img.reconvertFrom);
+        formData.append('reconvertName[]', img.name);
+      }
+    });
     formData.append('format', format);
     formData.append('sessionId', sessionId);
     // Mark as converting
@@ -95,20 +103,25 @@ export default function ImageQueue({ format, setFormat, sessionId, onClear, newF
       });
       if (!response.ok) throw new Error('Conversion failed');
       const data = await response.json();
+      console.log('Conversion response:', data); // Log the response for debugging
       // Remove waiting/converting items, add new converted
       setQueue(prev => [
         ...prev.filter(img => img.status === 'converted'),
-        ...data.files.map((file: { name: string; file: string; format: string; thumbnail: string; originalSize: number; convertedSize: number }) => ({
-          name: file.name,
-          url: `/api/download?session=${sessionId}&file=${encodeURIComponent(file.file)}`,
-          format: file.format,
-          status: 'converted',
-          thumbnail: file.thumbnail ? `/api/thumbnail?session=${sessionId}&file=${encodeURIComponent(file.thumbnail)}` : '',
-          originalSize: file.originalSize,
-          convertedSize: file.convertedSize
-        }))
+        ...data.files.map((file: { name: string; file: string; format: string; thumbnail: string; originalSize: number; convertedSize: number }) => {
+          console.log('Processing file from response:', file); // Log each file
+          return {
+            name: file.name, // display name
+            url: `/api/download?session=${sessionId}&file=${encodeURIComponent(file.file)}`, // use file path from API for URL
+            format: file.format,
+            status: 'converted',
+            thumbnail: file.thumbnail ? `/api/thumbnail?session=${sessionId}&file=${encodeURIComponent(file.thumbnail)}` : '',
+            originalSize: file.originalSize,
+            convertedSize: file.convertedSize
+          };
+        })
       ]);
-    } catch {
+    } catch (error) {
+      console.error('Conversion error:', error); // Log any errors
       setQueue(prev => prev.map(img => img.status === 'converting' ? { ...img, status: 'error' } : img));
     } finally {
       setIsConverting(false);
@@ -238,6 +251,50 @@ export default function ImageQueue({ format, setFormat, sessionId, onClear, newF
                         strokeLinejoin="round"
                         strokeWidth={2}
                         d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                      />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setQueue(prev => {
+                        // Use a date-time suffix for uniqueness
+                        const baseName = image.name;
+                        const now = new Date();
+                        const pad = (n: number) => n.toString().padStart(2, '0');
+                        const dateSuffix = `${pad(now.getDate())}${pad(now.getMonth() + 1)}${now.getFullYear()}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+                        const newName = `${baseName}_${dateSuffix}`;
+                        // Add a new waiting entry referencing the same original (no fileObj, but mark as waiting)
+                        return [
+                          ...prev,
+                          {
+                            name: newName,
+                            url: '',
+                            format: image.format,
+                            status: 'waiting',
+                            thumbnail: image.thumbnail, // reuse thumbnail for now
+                            fileObj: undefined,
+                            originalSize: image.originalSize,
+                            convertedSize: undefined,
+                            reconvertFrom: image.name // mark the original name
+                          }
+                        ];
+                      });
+                    }}
+                    className="p-2 text-blue-500 hover:text-blue-700 focus:outline-none ml-2"
+                    title="Reconvert file"
+                  >
+                    {/* Refresh/redo icon */}
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M4 4v5h.582M20 20v-5h-.581M5.5 19A9 9 0 0020 15.5M18.364 5.636A9 9 0 004 8.5"
                       />
                     </svg>
                   </button>

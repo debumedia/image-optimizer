@@ -68,7 +68,12 @@ export async function POST(request: Request) {
     await ensureDir(originalDir);
     await ensureDir(outputDir);
 
-    // Save original files to disk
+    // Handle reconvert requests
+    const reconvertFrom = formData.getAll('reconvertFrom[]') as string[];
+    const reconvertName = formData.getAll('reconvertName[]') as string[];
+    const reconvertPairs = reconvertFrom.map((from, i) => ({ from, to: reconvertName[i] }));
+
+    // Save original files to disk (from uploads)
     const savedFiles = await Promise.all(
       files.map(async (file) => {
         if (!ALLOWED_MIME.includes(file.type)) {
@@ -87,7 +92,7 @@ export async function POST(request: Request) {
       })
     );
 
-    // Convert and save output files
+    // Convert and save output files (from uploads)
     const convertedFiles = await Promise.all(
       savedFiles.map(async ({ originalPath, safeBase, origExt, origFileName, originalSize, normalizedFileName }) => {
         // Output file: use the normalized base name with the new format extension
@@ -126,15 +131,124 @@ export async function POST(request: Request) {
       })
     );
 
+    // Handle reconvert conversions
+    const reconvertConverted = await Promise.all(
+      reconvertPairs.map(async ({ from, to }) => {
+        try {
+          console.log('Reconverting:', { from, to });
+
+          // Look up the original file record in the DB
+          const origRecord = db.prepare('SELECT file_path, original_file_name, original_size FROM files WHERE session_id = ? AND file_name = ?').get(sessionId, from) as { file_path: string; original_file_name: string; original_size: number } | undefined;
+          if (!origRecord) {
+            console.error('Original file record not found for reconvert:', from);
+            throw new Error(`Original file record not found for reconvert: ${from}`);
+          }
+
+          console.log('Found original record:', origRecord);
+
+          // Check both output and original directories for the source file
+          // First try the output directory (for reconverts of already converted files)
+          const outputSourcePath = path.join(outputDir, origRecord.file_path);
+          // Also try the original directory (for first-time conversions)
+          const originalSourcePath = path.join(originalDir, origRecord.file_path);
+          
+          // Determine which file exists and use that as the source
+          let inputBuffer: Buffer;
+          try {
+            try {
+              // First try the output directory
+              console.log('Trying output source path:', outputSourcePath);
+              inputBuffer = await fs.readFile(outputSourcePath);
+              console.log('Found source file in output directory');
+            } catch (err) {
+              // If that fails, try the original directory
+              console.log('Trying original source path:', originalSourcePath);
+              inputBuffer = await fs.readFile(originalSourcePath);
+              console.log('Found source file in original directory');
+            }
+          } catch (err) {
+            console.error('Error reading source file for reconvert:', err);
+            throw new Error(`Could not find source file for reconvert in either output or original directory: ${origRecord.file_path}`);
+          }
+
+          // Use a completely different name for the output to avoid overwriting
+          const now = new Date();
+          const pad = (n: number) => n.toString().padStart(2, '0');
+          const timestamp = `${pad(now.getDate())}${pad(now.getMonth() + 1)}${now.getFullYear()}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+          
+          // Base normalized name without timestamp
+          const baseName = normalizeFileName(to.replace(/\.[^/.]+$/, '').replace(/_\d{14}$/, ''));
+          
+          // Generate unique filename with timestamp
+          const reconvertBase = `${baseName}_${timestamp}`;
+          
+          console.log('Timestamp generated:', timestamp);
+          console.log('Normalized reconvert name with timestamp:', reconvertBase);
+          
+          const outputFileName = `${reconvertBase}.${format}`;
+          const outputPath = path.join(outputDir, outputFileName);
+          const thumbnailPath = path.join(outputDir, `${reconvertBase}_thumb.webp`);
+          
+          console.log('Output paths:', { outputFileName, outputPath, thumbnailPath });
+
+          // Read the original file and create a new converted file
+          let convertedBuffer: Buffer;
+          switch (format) {
+            case 'webp':
+              convertedBuffer = await sharp(inputBuffer).webp().toBuffer();
+              break;
+            case 'jpeg':
+              convertedBuffer = await sharp(inputBuffer).jpeg().toBuffer();
+              break;
+            case 'png':
+              convertedBuffer = await sharp(inputBuffer).png().toBuffer();
+              break;
+            default:
+              throw new Error('Unsupported format');
+          }
+
+          // Write the new converted file
+          await fs.writeFile(outputPath, convertedBuffer);
+          console.log('Wrote converted file');
+
+          const { size: convertedSize } = await fs.stat(outputPath);
+          console.log('Converted size:', convertedSize);
+
+          // Generate and save thumbnail
+          const thumbBuffer = await sharp(inputBuffer).resize(128, 128, { fit: 'cover' }).webp().toBuffer();
+          await fs.writeFile(thumbnailPath, thumbBuffer);
+          console.log('Wrote thumbnail');
+
+          return {
+            name: to, // for display
+            normalizedName: outputFileName, // for API/DB
+            format,
+            file: outputFileName, // This is the filename used for downloads
+            thumbnail: `${reconvertBase}_thumb.webp`,
+            originalSize: origRecord.original_size,
+            convertedSize
+          };
+        } catch (error) {
+          console.error('Error in reconvert:', error);
+          throw error;
+        }
+      })
+    );
+
     // Insert or replace session and file records
     db.prepare('INSERT OR IGNORE INTO sessions (session_id) VALUES (?)').run(sessionId);
     convertedFiles.forEach(({ name, normalizedName, format, file, thumbnail, originalSize, convertedSize }, idx) => {
       db.prepare('INSERT OR REPLACE INTO files (session_id, file_name, file_path, format, thumbnail_path, original_file_name, original_size, converted_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
         .run(sessionId, name, normalizedName, format, thumbnail, savedFiles[idx].origFileName, originalSize, convertedSize);
     });
+    // Insert reconvert conversions
+    reconvertConverted.forEach(({ name, normalizedName, format, file, thumbnail, originalSize, convertedSize }) => {
+      db.prepare('INSERT OR REPLACE INTO files (session_id, file_name, file_path, format, thumbnail_path, original_file_name, original_size, converted_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(sessionId, name, normalizedName, format, thumbnail, name, originalSize, convertedSize);
+    });
 
     // Return session ID and file info for download
-    return NextResponse.json({ sessionId, files: convertedFiles });
+    return NextResponse.json({ sessionId, files: [...convertedFiles, ...reconvertConverted] });
   } catch (error) {
     if (error instanceof Error) {
       console.error('Error processing images:', error.message, error.stack);
@@ -201,24 +315,64 @@ export async function DELETE(request: Request) {
     if (file) {
       // Delete a single file
       const sessionDir = path.join(TMP_ROOT, sessionId, 'output');
-      const safeFile = normalizeFileName(file);
-      const fileRecord = db.prepare('SELECT file_path, thumbnail_path, original_file_name FROM files WHERE session_id = ? AND file_path = ?').get(sessionId, safeFile) as { file_path: string; thumbnail_path: string; original_file_name: string } | undefined;
+      const originalDir = path.join(TMP_ROOT, sessionId, 'original');
+      
+      console.log('Deleting file:', { sessionId, file });
+      
+      // First, try to find the file by name (display name)
+      const fileRecord = db.prepare('SELECT file_name, file_path, thumbnail_path, original_file_name FROM files WHERE session_id = ? AND file_name = ?').get(sessionId, file) as { 
+        file_name: string; 
+        file_path: string; 
+        thumbnail_path: string; 
+        original_file_name: string 
+      } | undefined;
+      
       if (fileRecord) {
+        console.log('Found file record by name:', fileRecord);
         const filePath = path.join(sessionDir, fileRecord.file_path);
         const thumbPath = path.join(sessionDir, fileRecord.thumbnail_path);
-        const originalDir = path.join(TMP_ROOT, sessionId, 'original');
         const origPath = path.join(originalDir, fileRecord.original_file_name);
-        try { await fs.unlink(filePath); } catch {}
-        try { await fs.unlink(thumbPath); } catch {}
-        try { await fs.unlink(origPath); } catch {}
-        db.prepare('DELETE FROM files WHERE session_id = ? AND file_path = ?').run(sessionId, safeFile);
+        
+        try { 
+          await fs.unlink(filePath); 
+          console.log('Deleted file:', filePath);
+        } catch (e) { 
+          console.error('Error deleting file:', filePath, e); 
+        }
+        
+        try { 
+          await fs.unlink(thumbPath); 
+          console.log('Deleted thumbnail:', thumbPath);
+        } catch (e) { 
+          console.error('Error deleting thumbnail:', thumbPath, e); 
+        }
+        
+        // Only delete original if no other files reference it
+        const originalFileCount = db.prepare('SELECT COUNT(*) as count FROM files WHERE session_id = ? AND original_file_name = ?').get(sessionId, fileRecord.original_file_name) as { count: number };
+        if (originalFileCount.count <= 1) {
+          try { 
+            await fs.unlink(origPath); 
+            console.log('Deleted original:', origPath);
+          } catch (e) { 
+            console.error('Error deleting original:', origPath, e); 
+          }
+        } else {
+          console.log('Not deleting original file as it is referenced by other conversions:', origPath);
+        }
+        
+        // Delete from DB using file_name (display name)
+        db.prepare('DELETE FROM files WHERE session_id = ? AND file_name = ?').run(sessionId, file);
+        console.log('Deleted DB record for:', file);
+      } else {
+        console.log('File record not found for:', file);
       }
+      
       // If no more files, clean up session and directories
-      const remaining = db.prepare('SELECT COUNT(*) as count FROM files WHERE session_id = ?').get(sessionId).count;
-      if (remaining === 0) {
-        const originalDir = path.join(TMP_ROOT, sessionId, 'original');
-        try { await fs.rm(sessionDir, { recursive: true, force: true }); } catch {}
-        try { await fs.rm(originalDir, { recursive: true, force: true }); } catch {}
+      const remaining = db.prepare('SELECT COUNT(*) as count FROM files WHERE session_id = ?').get(sessionId) as { count: number };
+      if (remaining.count === 0) {
+        console.log('No more files in session, cleaning up directories');
+        try { await fs.rm(sessionDir, { recursive: true, force: true }); } catch (e) { console.error('Error removing output dir:', e); }
+        try { await fs.rm(originalDir, { recursive: true, force: true }); } catch (e) { console.error('Error removing original dir:', e); }
         db.prepare('DELETE FROM sessions WHERE session_id = ?').run(sessionId);
       }
       return NextResponse.json({ success: true });
