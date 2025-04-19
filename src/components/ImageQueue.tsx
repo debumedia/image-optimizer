@@ -43,18 +43,31 @@ export default function ImageQueue({ format, setFormat, sessionId, onClear, newF
   // Add new files to queue as waiting
   useEffect(() => {
     if (newFiles.length > 0) {
-      const newQueueItems = newFiles.map(file => ({
-        name: file.name.split('.')[0],
-        url: '',
-        format,
-        status: 'waiting' as const,
-        thumbnail: URL.createObjectURL(file),
-        fileObj: file
-      }));
-      setQueue(prev => [
-        ...prev,
-        ...newQueueItems.filter(nq => !prev.some(q => q.name === nq.name && q.format === nq.format))
-      ]);
+      setQueue(prev => {
+        const updatedQueue = [...prev];
+        newFiles.forEach(file => {
+          const ext = file.name.split('.').pop() || '';
+          const baseName = file.name.replace(/\.[^/.]+$/, '');
+          let uniqueName = baseName;
+          let counter = 1;
+          // Find a unique name
+          while (updatedQueue.some(q => q.name === uniqueName && q.format === format)) {
+            uniqueName = `${baseName} (${counter})`;
+            counter++;
+          }
+          // Create a new File object with the unique name
+          const newFile = new File([file], `${uniqueName}.${ext}`, { type: file.type });
+          updatedQueue.push({
+            name: uniqueName,
+            url: '',
+            format,
+            status: 'waiting' as const,
+            thumbnail: URL.createObjectURL(newFile),
+            fileObj: newFile
+          });
+        });
+        return updatedQueue;
+      });
       setNewFiles([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

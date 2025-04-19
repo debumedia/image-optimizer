@@ -62,21 +62,25 @@ export async function POST(request: Request) {
         if (!ALLOWED_MIME.includes(file.type)) {
           throw new Error('Unsupported file type');
         }
-        const ext = file.name.split('.').pop() || 'img';
-        const baseName = path.basename(file.name, path.extname(file.name));
-        // Sanitize baseName
-        const safeBase = baseName.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const originalPath = path.join(originalDir, `${safeBase}.${ext}`);
+        // Use the full, unique file name from the frontend
+        const origExt = file.name.split('.').pop() || 'img';
+        const baseNameWithSuffix = file.name.replace(/\.[^/.]+$/, '');
+        // Sanitize for path safety but keep suffixes and parens
+        const safeBase = baseNameWithSuffix.replace(/[^a-zA-Z0-9._()\-]/g, '');
+        const safeOrigFileName = `${safeBase}.${origExt}`;
+        const originalPath = path.join(originalDir, safeOrigFileName);
         const buffer = Buffer.from(await file.arrayBuffer());
         await fs.writeFile(originalPath, buffer);
-        return { originalPath, safeBase, ext };
+        return { originalPath, safeBase, origExt, origFileName: file.name };
       })
     );
 
     // Convert and save output files
     const convertedFiles = await Promise.all(
-      savedFiles.map(async ({ originalPath, safeBase }) => {
-        const outputPath = path.join(outputDir, `${safeBase}.${format}`);
+      savedFiles.map(async ({ originalPath, safeBase, origExt, origFileName }) => {
+        // Output file: use the same base name as the original, but with the new format extension
+        const outputFileName = `${safeBase}.${format}`;
+        const outputPath = path.join(outputDir, outputFileName);
         const thumbnailPath = path.join(outputDir, `${safeBase}_thumb.webp`);
         const inputBuffer = await fs.readFile(originalPath);
         let convertedBuffer: Buffer;
@@ -97,7 +101,7 @@ export async function POST(request: Request) {
         // Generate and save thumbnail (always as webp)
         const thumbBuffer = await sharp(inputBuffer).resize(128, 128, { fit: 'cover' }).webp().toBuffer();
         await fs.writeFile(thumbnailPath, thumbBuffer);
-        return { name: safeBase, format, file: `${safeBase}.${format}`, thumbnail: `${safeBase}_thumb.webp` };
+        return { name: outputFileName, format, file: outputFileName, thumbnail: `${safeBase}_thumb.webp` };
       })
     );
 
@@ -165,8 +169,8 @@ export async function DELETE(request: Request) {
   }
   // Remove session output and original directories if empty
   const originalDir = path.join(TMP_ROOT, sessionId, 'original');
-  try { await fs.rmdir(sessionDir, { recursive: true }); } catch {}
-  try { await fs.rmdir(originalDir, { recursive: true }); } catch {}
+  try { await fs.rm(sessionDir, { recursive: true, force: true }); } catch {}
+  try { await fs.rm(originalDir, { recursive: true, force: true }); } catch {}
   // Delete from DB
   db.prepare('DELETE FROM files WHERE session_id = ?').run(sessionId);
   db.prepare('DELETE FROM sessions WHERE session_id = ?').run(sessionId);
