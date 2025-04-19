@@ -16,6 +16,7 @@ export default function ImageUploader() {
   const [convertedImages, setConvertedImages] = useState<ConvertedImage[]>([]);
   const [format, setFormat] = useState('webp');
   const [isConverting, setIsConverting] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -64,9 +65,12 @@ export default function ImageUploader() {
       if (!response.ok) throw new Error('Conversion failed');
       
       const data = await response.json();
+      setSessionId(data.sessionId);
       setConvertedImages(prev => prev.map((img, index) => ({
         ...img,
-        url: data[index].url,
+        url: `/api/download?session=${data.sessionId}&file=${encodeURIComponent(data.files[index].file)}`,
+        name: data.files[index].name,
+        format: data.files[index].format,
         status: 'converted'
       })));
     } catch (error) {
