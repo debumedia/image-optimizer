@@ -8,6 +8,8 @@ export interface QueueImage {
   status: 'waiting' | 'converting' | 'converted' | 'error';
   thumbnail: string;
   fileObj?: File; // Only for waiting items
+  originalSize?: number;
+  convertedSize?: number;
 }
 
 interface ImageQueueProps {
@@ -29,12 +31,14 @@ export default function ImageQueue({ format, setFormat, sessionId, onClear, newF
       .then(res => res.json())
       .then(data => {
         if (data.files && Array.isArray(data.files)) {
-          setQueue(data.files.map((file: { name: string; file: string; format: string; thumbnail: string }) => ({
+          setQueue(data.files.map((file: { name: string; file: string; format: string; thumbnail: string; originalSize: number; convertedSize: number }) => ({
             name: file.name,
             url: `/api/download?session=${sessionId}&file=${encodeURIComponent(file.file)}`,
             format: file.format,
             status: 'converted',
-            thumbnail: file.thumbnail ? `/api/thumbnail?session=${sessionId}&file=${encodeURIComponent(file.thumbnail)}` : ''
+            thumbnail: file.thumbnail ? `/api/thumbnail?session=${sessionId}&file=${encodeURIComponent(file.thumbnail)}` : '',
+            originalSize: file.originalSize,
+            convertedSize: file.convertedSize
           })));
         }
       });
@@ -94,12 +98,14 @@ export default function ImageQueue({ format, setFormat, sessionId, onClear, newF
       // Remove waiting/converting items, add new converted
       setQueue(prev => [
         ...prev.filter(img => img.status === 'converted'),
-        ...data.files.map((file: { name: string; file: string; format: string; thumbnail: string }) => ({
+        ...data.files.map((file: { name: string; file: string; format: string; thumbnail: string; originalSize: number; convertedSize: number }) => ({
           name: file.name,
           url: `/api/download?session=${sessionId}&file=${encodeURIComponent(file.file)}`,
           format: file.format,
           status: 'converted',
-          thumbnail: file.thumbnail ? `/api/thumbnail?session=${sessionId}&file=${encodeURIComponent(file.thumbnail)}` : ''
+          thumbnail: file.thumbnail ? `/api/thumbnail?session=${sessionId}&file=${encodeURIComponent(file.thumbnail)}` : '',
+          originalSize: file.originalSize,
+          convertedSize: file.convertedSize
         }))
       ]);
     } catch {
@@ -144,6 +150,13 @@ export default function ImageQueue({ format, setFormat, sessionId, onClear, newF
     };
   }, [queue]);
 
+  // Helper to format bytes
+  function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  }
+
   return (
     <div className="bg-white rounded-lg shadow-lg p-6">
       <h2 className="text-xl font-semibold text-gray-900 mb-4">Image Queue</h2>
@@ -184,6 +197,22 @@ export default function ImageQueue({ format, setFormat, sessionId, onClear, newF
                    image.status === 'converted' ? 'Converted' :
                    image.status === 'error' ? 'Conversion failed' : ''}
                 </p>
+                {image.status === 'converted' && image.originalSize && image.convertedSize && (
+                  <div className="text-xs text-gray-500 mt-1 flex items-center gap-2">
+                    <span>{formatBytes(image.originalSize)} → {formatBytes(image.convertedSize)}</span>
+                    {(() => {
+                      const percent = image.originalSize > 0 ? ((100 * (image.originalSize - image.convertedSize) / image.originalSize)) : 0;
+                      const isReduced = percent >= 0;
+                      return (
+                        <span
+                          className={`px-2 py-0.5 rounded text-white font-semibold ${isReduced ? 'bg-green-500' : 'bg-red-500'}`}
+                        >
+                          ~ {Math.abs(percent).toFixed(1)}%
+                        </span>
+                      );
+                    })()}
+                  </div>
+                )}
               </div>
               {image.status === 'converted' && (
                 <>
