@@ -77,25 +77,12 @@ export default function ImageUploader() {
               </span>
             </label>
           </div>
-          <div className="space-y-4">
-            <label className="block text-sm font-medium text-gray-700">
-              Output Format
-            </label>
-            <select
-              value={format}
-              onChange={(e) => setFormat(e.target.value)}
-              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-            >
-              <option value="webp">WebP (Modern, High Quality)</option>
-              <option value="jpeg">JPEG (Compatible, Good Quality)</option>
-              <option value="png">PNG (Lossless, High Quality)</option>
-            </select>
-          </div>
         </div>
       </div>
       {/* Right Column - Image Queue */}
       <ImageQueue
         format={format}
+        setFormat={setFormat}
         sessionId={sessionId}
         onClear={clearList}
         newFiles={files}

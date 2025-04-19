@@ -12,13 +12,14 @@ export interface QueueImage {
 
 interface ImageQueueProps {
   format: string;
+  setFormat: (format: string) => void;
   sessionId: string;
   onClear: () => void;
   newFiles: File[];
   setNewFiles: (files: File[]) => void;
 }
 
-export default function ImageQueue({ format, sessionId, onClear, newFiles, setNewFiles }: ImageQueueProps) {
+export default function ImageQueue({ format, setFormat, sessionId, onClear, newFiles, setNewFiles }: ImageQueueProps) {
   const [queue, setQueue] = useState<QueueImage[]>([]);
   const [isConverting, setIsConverting] = useState(false);
 
@@ -237,35 +238,51 @@ export default function ImageQueue({ format, sessionId, onClear, newFiles, setNe
           </p>
         </div>
       )}
-      <div className="flex justify-between mt-4">
-        <button
-          onClick={convertImages}
-          disabled={isConverting || !queue.some(img => img.status === 'waiting')}
-          className="py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
-        >
-          {isConverting ? (
-            <span className="flex items-center">
-              <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              Converting...
-            </span>
-          ) : (
-            'Convert Images'
-          )}
-        </button>
-        <button
-          onClick={async () => {
-            queue.forEach(img => img.thumbnail && img.status === 'waiting' && URL.revokeObjectURL(img.thumbnail));
-            await fetch(`/api/convert?sessionId=${sessionId}`, { method: 'DELETE' });
-            setQueue([]);
-            onClear();
-          }}
-          className="py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-        >
-          Clear Queue
-        </button>
+      <div className="flex flex-col gap-4 mt-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700">
+            Output Format
+          </label>
+          <select
+            value={format}
+            onChange={e => setFormat(e.target.value)}
+            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+          >
+            <option value="webp">WebP (Modern, High Quality)</option>
+            <option value="jpeg">JPEG (Compatible, Good Quality)</option>
+            <option value="png">PNG (Lossless, High Quality)</option>
+          </select>
+        </div>
+        <div className="flex justify-between">
+          <button
+            onClick={convertImages}
+            disabled={isConverting || !queue.some(img => img.status === 'waiting')}
+            className="py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
+          >
+            {isConverting ? (
+              <span className="flex items-center">
+                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Converting...
+              </span>
+            ) : (
+              'Convert Images'
+            )}
+          </button>
+          <button
+            onClick={async () => {
+              queue.forEach(img => img.thumbnail && img.status === 'waiting' && URL.revokeObjectURL(img.thumbnail));
+              await fetch(`/api/convert?sessionId=${sessionId}`, { method: 'DELETE' });
+              setQueue([]);
+              onClear();
+            }}
+            className="py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+          >
+            Clear Queue
+          </button>
+        </div>
       </div>
     </div>
   );
